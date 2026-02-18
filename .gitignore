@@ -1,2 +1,6 @@
 /cmake-build-debug/
 /.idea/
+/tests/
+/Website/
+/wasm/
+/build-wasm/
