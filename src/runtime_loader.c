@@ -170,6 +170,9 @@ int runtime_main(int argc, char** argv) {
     free(bytecode);
 
     ZymStatus result = zym_runChunk(vm, chunk);
+    while (result == ZYM_STATUS_YIELD) {
+        result = zym_resume(vm);
+    }
     if (result != ZYM_STATUS_OK) {
         fprintf(stderr, "Error: Runtime error occurred.\n");
         zym_freeChunk(vm, chunk);
@@ -184,6 +187,9 @@ int runtime_main(int argc, char** argv) {
 
     if (zym_hasFunction(vm, "main", 1)) {
         ZymStatus call_result = zym_call(vm, "main", 1, argv_list);
+        while (call_result == ZYM_STATUS_YIELD) {
+            call_result = zym_resume(vm);
+        }
         if (call_result != ZYM_STATUS_OK) {
             fprintf(stderr, "Error: main(argv) function failed.\n");
             zym_freeChunk(vm, chunk);
