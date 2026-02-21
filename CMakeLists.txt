@@ -3,7 +3,7 @@ set(CMAKE_CONFIGURATION_TYPES "Debug;Release;Tiny")
 set(CMAKE_C_FLAGS_RELEASE "-O3 -march=native -DNDEBUG")
 
 set(CMAKE_C_FLAGS_TINY "-Oz -DNDEBUG -ffunction-sections -fdata-sections -fno-exceptions -fvisibility=hidden -fno-asynchronous-unwind-tables -fno-unwind-tables")
-set(CMAKE_EXE_LINKER_FLAGS_TINY "-Wl,--gc-sections -Wl,-s")
+set(CMAKE_EXE_LINKER_FLAGS_TINY "-Wl,--gc-sections -Wl,-s -Wl,-Map,zym_cli.map")
 
 set(PGO_MODE "OFF")
 if(PGO_MODE STREQUAL "GEN")
