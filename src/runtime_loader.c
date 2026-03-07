@@ -147,14 +147,14 @@ bool has_embedded_bytecode(void) {
     return memcmp(footer + 4, FOOTER_MAGIC, 8) == 0;
 }
 
-int runtime_main(int argc, char** argv) {
+int runtime_main(int argc, char** argv, ZymAllocator* allocator) {
     size_t bytecode_size = 0;
     char* bytecode = extract_embedded_bytecode(&bytecode_size);
     if (!bytecode) {
         return 1;
     }
 
-    ZymVM* vm = zym_newVM();
+    ZymVM* vm = zym_newVM(allocator);
     ZymChunk* chunk = zym_newChunk(vm);
 
     setupNatives(vm);

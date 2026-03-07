@@ -75,7 +75,7 @@ static ModuleReadResult zymvm_module_read_callback(const char* path, void* user_
 }
 
 static char* zymvm_compile_source_internal(ZymVM* parent_vm, const char* source, const char* file_path, size_t* out_size) {
-    ZymVM* compile_vm = zym_newVM();
+    ZymVM* compile_vm = zym_newVM(NULL);
     if (!compile_vm) return NULL;
 
     setupNatives(compile_vm);
@@ -743,7 +743,7 @@ ZymValue nativeZymVM_create(ZymVM* vm) {
         return ZYM_ERROR;
     }
 
-    vmdata->vm = zym_newVM();
+    vmdata->vm = zym_newVM(NULL);
     if (!vmdata->vm) {
         free(vmdata);
         zym_runtimeError(vm, "Failed to create nested VM");

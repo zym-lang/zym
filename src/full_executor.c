@@ -251,13 +251,13 @@ static ModuleReadResult readAndPreprocessCallback(const char* path, void* user_d
     return result;
 }
 
-static int preprocess_source(const char* source_file, char** out_preprocessed_source) {
+static int preprocess_source(const char* source_file, char** out_preprocessed_source, ZymAllocator* allocator) {
     char* pre_source = read_file(source_file);
     if (!pre_source) return 0;
 
     const char* processed_source = NULL;
 
-    ZymVM* vm = zym_newVM();
+    ZymVM* vm = zym_newVM(allocator);
     ZymLineMap* line_map = zym_newLineMap(vm);
 
     setupNatives(vm);
@@ -288,13 +288,13 @@ static int preprocess_source(const char* source_file, char** out_preprocessed_so
     return 1;
 }
 
-static int generate_combined_source(const char* source_file, char** out_combined_source, int use_debug_names) {
+static int generate_combined_source(const char* source_file, char** out_combined_source, int use_debug_names, ZymAllocator* allocator) {
     char* pre_source = read_file(source_file);
     if (!pre_source) return 0;
 
     const char* processed_source = NULL;
 
-    ZymVM* compile_vm = zym_newVM();
+    ZymVM* compile_vm = zym_newVM(allocator);
     ZymLineMap* line_map = zym_newLineMap(compile_vm);
 
     setupNatives(compile_vm);
@@ -344,13 +344,13 @@ static int generate_combined_source(const char* source_file, char** out_combined
     return 1;
 }
 
-static int compile_source_to_bytecode(const char* source_file, char** out_bytecode, size_t* out_size, int include_line_info) {
+static int compile_source_to_bytecode(const char* source_file, char** out_bytecode, size_t* out_size, int include_line_info, ZymAllocator* allocator) {
     char* pre_source = read_file(source_file);
     if (!pre_source) return 0;
 
     const char* processed_source = NULL;
 
-    ZymVM* compile_vm = zym_newVM();
+    ZymVM* compile_vm = zym_newVM(allocator);
     ZymLineMap* line_map = zym_newLineMap(compile_vm);
     ZymChunk* compiled_chunk = zym_newChunk(compile_vm);
 
@@ -461,8 +461,8 @@ static int dump_chunk_to_file(ZymChunk* chunk, const char* output_file) {
     return 1;
 }
 
-static int dump_bytecode(char* bytecode, size_t bytecode_size, const char* output_file) {
-    ZymVM* vm = zym_newVM();
+static int dump_bytecode(char* bytecode, size_t bytecode_size, const char* output_file, ZymAllocator* allocator) {
+    ZymVM* vm = zym_newVM(allocator);
     ZymChunk* chunk = zym_newChunk(vm);
 
     setupNatives(vm);
@@ -490,8 +490,8 @@ static int dump_bytecode(char* bytecode, size_t bytecode_size, const char* outpu
     return 0;
 }
 
-static int execute_bytecode(char* bytecode, size_t bytecode_size, int script_argc, char** script_argv, const char* program_name) {
-    ZymVM* run_vm = zym_newVM();
+static int execute_bytecode(char* bytecode, size_t bytecode_size, int script_argc, char** script_argv, const char* program_name, ZymAllocator* allocator) {
+    ZymVM* run_vm = zym_newVM(allocator);
     ZymChunk* loaded_chunk = zym_newChunk(run_vm);
 
     setupNatives(run_vm);
@@ -548,7 +548,7 @@ static int execute_bytecode(char* bytecode, size_t bytecode_size, int script_arg
     return 0;
 }
 
-int full_main(int argc, char** argv) {
+int full_main(int argc, char** argv, ZymAllocator* allocator) {
     if (argc == 1 || (argc == 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0))) {
         print_banner();
         return 0;
@@ -599,7 +599,7 @@ int full_main(int argc, char** argv) {
                 return 1;
             }
 
-            int result = execute_bytecode(bytecode, bytecode_size, script_argc, script_argv, argv[0]);
+            int result = execute_bytecode(bytecode, bytecode_size, script_argc, script_argv, argv[0], allocator);
             free(bytecode);
             return result;
         }
@@ -609,12 +609,12 @@ int full_main(int argc, char** argv) {
             size_t bytecode_size = 0;
 
             int include_line_info = strip_mode ? 0 : 1;
-            if (!compile_source_to_bytecode(input_file, &bytecode, &bytecode_size, include_line_info)) {
+            if (!compile_source_to_bytecode(input_file, &bytecode, &bytecode_size, include_line_info, allocator)) {
                 return 1;
             }
 
             //printf("Compilation successful. Bytecode size: %zu bytes\n", bytecode_size);
-            int result = execute_bytecode(bytecode, bytecode_size, script_argc, script_argv, argv[0]);
+            int result = execute_bytecode(bytecode, bytecode_size, script_argc, script_argv, argv[0], allocator);
             free(bytecode);
             return result;
         }
@@ -698,7 +698,7 @@ int full_main(int argc, char** argv) {
         }
 
         char* preprocessed_source = NULL;
-        if (!preprocess_source(input_file, &preprocessed_source)) {
+        if (!preprocess_source(input_file, &preprocessed_source, allocator)) {
             return 1;
         }
 
@@ -735,7 +735,7 @@ int full_main(int argc, char** argv) {
 
         char* combined_source = NULL;
         int use_debug_names = !has_strip;
-        if (!generate_combined_source(input_file, &combined_source, use_debug_names)) {
+        if (!generate_combined_source(input_file, &combined_source, use_debug_names, allocator)) {
             return 1;
         }
 
@@ -780,7 +780,7 @@ int full_main(int argc, char** argv) {
         bytecode_allocated = 1;
     } else if (input_is_zym) {
         int include_line_info = has_strip ? 0 : 1;
-        if (!compile_source_to_bytecode(input_file, &bytecode, &bytecode_size, include_line_info)) {
+        if (!compile_source_to_bytecode(input_file, &bytecode, &bytecode_size, include_line_info, allocator)) {
             return 1;
         }
         printf("Compilation successful. Bytecode size: %zu bytes\n", bytecode_size);
@@ -790,7 +790,7 @@ int full_main(int argc, char** argv) {
     int final_result = 0;
 
     if (has_dump) {
-        int dump_result = dump_bytecode(bytecode, bytecode_size, dump_output);
+        int dump_result = dump_bytecode(bytecode, bytecode_size, dump_output, allocator);
         if (dump_result != 0) {
             final_result = dump_result;
         }
