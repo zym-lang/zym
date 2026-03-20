@@ -79,13 +79,6 @@ static bool printFormattedValue(ZymVM* vm, char format, ZymValue val, int argInd
             zym_printValue(vm, val);
             break;
 
-        case 'r':
-            if (!zym_isReference(val) && !zym_isNativeReference(val)) {
-                zym_runtimeError(vm, "print() format %%r at position %d expects reference, got %s", argIndex, zym_typeName(val));
-                return false;
-            }
-            zym_printValue(vm, val);
-            break;
 
         case 'v':
             zym_printValue(vm, val);
