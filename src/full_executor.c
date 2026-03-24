@@ -274,6 +274,7 @@ static int preprocess_source(const char* source_file, char** out_preprocessed_so
     *out_preprocessed_source = (char*)malloc(processed_len + 1);
     if (!*out_preprocessed_source) {
         fprintf(stderr, "Error: Could not allocate memory for preprocessed source.\n");
+        zym_freeProcessedSource(vm, processed_source);
         free(pre_source);
         zym_freeLineMap(vm, line_map);
         zym_freeVM(vm);
@@ -281,6 +282,7 @@ static int preprocess_source(const char* source_file, char** out_preprocessed_so
     }
     strcpy(*out_preprocessed_source, processed_source);
 
+    zym_freeProcessedSource(vm, processed_source);
     free(pre_source);
     zym_freeLineMap(vm, line_map);
     zym_freeVM(vm);
@@ -317,6 +319,7 @@ static int generate_combined_source(const char* source_file, char** out_combined
 
     if (module_result->has_error) {
         fprintf(stderr, "Error: Module loading failed: %s\n", module_result->error_message);
+        zym_freeProcessedSource(compile_vm, processed_source);
         free(pre_source);
         freeModuleLoadResult(compile_vm, module_result);
         zym_freeLineMap(compile_vm, line_map);
@@ -328,6 +331,7 @@ static int generate_combined_source(const char* source_file, char** out_combined
     *out_combined_source = (char*)malloc(combined_len + 1);
     if (!*out_combined_source) {
         fprintf(stderr, "Error: Could not allocate memory for combined source.\n");
+        zym_freeProcessedSource(compile_vm, processed_source);
         free(pre_source);
         freeModuleLoadResult(compile_vm, module_result);
         zym_freeLineMap(compile_vm, line_map);
@@ -336,6 +340,7 @@ static int generate_combined_source(const char* source_file, char** out_combined
     }
     strcpy(*out_combined_source, module_result->combined_source);
 
+    zym_freeProcessedSource(compile_vm, processed_source);
     free(pre_source);
     freeModuleLoadResult(compile_vm, module_result);
     zym_freeLineMap(compile_vm, line_map);
@@ -376,6 +381,7 @@ static int compile_source_to_bytecode(const char* source_file, char** out_byteco
 
     if (module_result->has_error) {
         fprintf(stderr, "Error: Module loading failed: %s\n", module_result->error_message);
+        zym_freeProcessedSource(compile_vm, processed_source);
         free(pre_source);
         freeModuleLoadResult(compile_vm, module_result);
         zym_freeChunk(compile_vm, compiled_chunk);
@@ -409,6 +415,7 @@ static int compile_source_to_bytecode(const char* source_file, char** out_byteco
 
     if (zym_compile(compile_vm, module_result->combined_source, compiled_chunk, module_result->line_map, entry_file_to_use, config) != ZYM_STATUS_OK) {
         fprintf(stderr, "Error: Compilation failed.\n");
+        zym_freeProcessedSource(compile_vm, processed_source);
         free(pre_source);
         freeModuleLoadResult(compile_vm, module_result);
         zym_freeChunk(compile_vm, compiled_chunk);
@@ -416,6 +423,7 @@ static int compile_source_to_bytecode(const char* source_file, char** out_byteco
         zym_freeVM(compile_vm);
         return 0;
     }
+    zym_freeProcessedSource(compile_vm, processed_source);
     free(pre_source);
     freeModuleLoadResult(compile_vm, module_result);
 
