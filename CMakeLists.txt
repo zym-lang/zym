@@ -1,5 +1,8 @@
 set(CMAKE_CONFIGURATION_TYPES "Debug;Release;Tiny")
 
+set(CMAKE_C_FLAGS_DEBUG "-g -O0 -fsanitize=address,undefined -fno-omit-frame-pointer")
+set(CMAKE_EXE_LINKER_FLAGS_DEBUG "-fsanitize=address,undefined")
+
 set(CMAKE_C_FLAGS_RELEASE "-O3 -march=native -DNDEBUG")
 
 set(CMAKE_C_FLAGS_TINY "-Oz -DNDEBUG -ffunction-sections -fdata-sections -fno-exceptions -fvisibility=hidden -fno-asynchronous-unwind-tables -fno-unwind-tables")
@@ -16,7 +19,7 @@ elseif(PGO_MODE STREQUAL "USE")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fprofile-use -fprofile-correction")
 endif()
 
-set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_BUILD_TYPE Debug)
 
 cmake_minimum_required(VERSION 4.0)
 project(src C)
@@ -40,17 +43,8 @@ set(APP_SOURCES
 set(ZYM_NATIVE_SOURCES
         src/natives/natives.h
         src/natives/natives.c
-        src/natives/marshal.h
-        src/natives/marshal.c
         src/natives/print.c
-        src/natives/console.c
         src/natives/util/time.c
-        src/natives/util/random.c
-        src/natives/buffer.c
-        src/natives/io.c
-        src/natives/os.c
-        src/natives/ZymVM.c
-        src/natives/process.c
 )
 
 add_executable(zym ${APP_SOURCES} ${ZYM_NATIVE_SOURCES})
