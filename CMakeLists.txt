@@ -43,8 +43,17 @@ set(APP_SOURCES
 set(ZYM_NATIVE_SOURCES
         src/natives/natives.h
         src/natives/natives.c
+        src/natives/marshal.h
+        src/natives/marshal.c
         src/natives/print.c
+        src/natives/buffer.c
+        src/natives/console.c
+        src/natives/io.c
+        src/natives/os.c
+        src/natives/process.c
+        src/natives/ZymVM.c
         src/natives/util/time.c
+        src/natives/util/random.c
 )
 
 add_executable(zym ${APP_SOURCES} ${ZYM_NATIVE_SOURCES})

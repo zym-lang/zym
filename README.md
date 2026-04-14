@@ -9,7 +9,7 @@
 
 ---
 
-Zym is a compact, systems-oriented scripting language that combines the familiarity of high-level syntax with the precision of explicit memory semantics. It's built for developers who need the agility of a script with the predictability of a system language.
+Zym is a compact, systems-oriented scripting language that combines the familiarity of high-level syntax with the control of a systems language. It's built for developers who need the agility of a script with the predictability of a compiled language.
 
 ### Familiar Syntax
 
@@ -51,7 +51,6 @@ var c = Color.Red;
 
 - **Zero Dependencies** — The entire language and runtime fit in a single, compact binary. No DLLs, no environment variables, no headaches.
 - **Instant Distribution** — Compile your scripts into standalone executables or portable bytecode with one command.
-- **Real Memory Semantics** — Use `ref`, `slot`, and `val` modifiers to control how values move. No more guessing if a function will modify your data.
 - **Unlimited Control Flow** — With delimited continuations, you can build fibers, coroutines, generators, and custom schedulers from scratch.
 - **Preemptive Execution** — The VM supports instruction-count-based time-slicing. Run untrusted code or build fair multi-tasking systems without cooperative yields.
 - **Script-Directed TCO** — Explicitly control tail-call optimization with the `@tco` directive to ensure predictable stack behavior in recursive algorithms.
@@ -59,28 +58,6 @@ var c = Color.Red;
 ## Beyond Scripting
 
 Zym offers features usually reserved for much heavier system languages, accessible through a simple API.
-
-### Explicit Memory Semantics
-Observable distinction between reference, slot (write-back), and value (copy) passing.
-
-```javascript
-func makeMachine() {
-    var total = 0
-    var totalRef = ref total
-
-    func bump(ref by) { total = total + by }
-
-    func mix(slot ext, ref mirror, val snap) {
-        ext = ext + 1       // writes back to caller's variable
-        mirror = ext         // writes through to caller's ref
-        bump(ext)            // total += ext via ref
-        snap[0] = 999       // local copy only — caller unchanged
-        totalRef = totalRef + 1
-    }
-
-    return { mix: mix, total: func() { return total; } }
-}
-```
 
 ### Delimited Continuations
 Build fibers, coroutines, or your own `async`/`await` primitives.
@@ -107,14 +84,12 @@ Ensure your recursive algorithms never overflow the stack.
 
 ```javascript
 @tco aggressive
-func test_nested(ref counter, stepsLeft) {
-    if (stepsLeft == 0) return counter;
-    
-    // Complex logic...
-    
-    counter = counter + 1;
-    return test_nested(counter, stepsLeft - 1);
+func sum(n, acc) {
+    if (n == 0) return acc;
+    return sum(n - 1, acc + n);
 }
+
+print(sum(1000000, 0));  // no stack overflow
 ```
 
 ## Single-Binary Distribution
