@@ -41,7 +41,7 @@ hello("world");  // Hello, world!
 struct Point { x, y }
 
 var p = Point(3, 4);
-var distance = Math.sqrt(Math.pow(p.x, 2) + Math.pow(p.y, 2));
+var distance = sqrt(pow(p.x, 2) + pow(p.y, 2));
 
 enum Color { Red, Green, Blue }
 var c = Color.Red;
