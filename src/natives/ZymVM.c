@@ -104,7 +104,7 @@ static char* zymvm_compile_source_internal(ZymVM* parent_vm, const char* source,
     ZymCompilerConfig config = { .include_line_info = 1 };
     const char* entry_file = module_result->module_count > 0 ? module_result->module_paths[0] : file_path;
 
-    if (zym_compile(compile_vm, module_result->combined_source, chunk, module_result->source_map, entry_file, config) != ZYM_STATUS_OK) {
+    if (zym_compile(compile_vm, module_result->combined_source, chunk, module_result->source_map, entry_file, config, NULL) != ZYM_STATUS_OK) {
         freeModuleLoadResult(compile_vm, module_result);
         zym_freeChunk(compile_vm, chunk);
         zym_freeSourceMap(compile_vm, source_map);

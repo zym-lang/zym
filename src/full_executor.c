@@ -446,7 +446,7 @@ static int compile_source_to_bytecode(const char* source_file, char** out_byteco
         entry_file_to_use = (char*)entry_file_path;
     }
 
-    if (zym_compile(compile_vm, module_result->combined_source, compiled_chunk, module_result->source_map, entry_file_to_use, config) != ZYM_STATUS_OK) {
+    if (zym_compile(compile_vm, module_result->combined_source, compiled_chunk, module_result->source_map, entry_file_to_use, config, NULL) != ZYM_STATUS_OK) {
         drain_and_print_diagnostics(compile_vm);
         fprintf(stderr, "Error: Compilation failed.\n");
         zym_freeProcessedSource(compile_vm, processed_source);
