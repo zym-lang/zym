@@ -126,6 +126,17 @@ cmake --build build --target zym
 
 The `zym` executable will be located in the `build` directory.
 
+### Build-time feature flags
+
+Zym's LSP / tooling surface (retained parse trees, symbol table, extended native metadata, stable diagnostic codes) is gated behind compile-time flags so resource-constrained embedders — MCU firmware, size-limited hosts — can strip it out entirely. The default build (`ZYM_ENABLE_LSP_SURFACE=ON`) includes everything; pass `-DZYM_ENABLE_LSP_SURFACE=OFF` to produce a minimum-footprint build:
+
+```text
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DZYM_ENABLE_LSP_SURFACE=OFF
+cmake --build build --target zym
+```
+
+Flags are build-time, not runtime — turning them off removes tooling surface, not language behavior. See [`zym_core/README.md`](zym_core/README.md#build-options) for the full flag table.
+
 ### Running Scripts
 
 Create `hello.zym`:

@@ -28,6 +28,29 @@ void setupNatives(ZymVM* vm);
 
 #define FOOTER_MAGIC "ZYMBCODE"
 
+// Drain the VM's structured diagnostics to stderr and clear the buffer. This
+// replaces the fprintf(stderr, …) fallback that used to live inside
+// parser.c / compiler.c; every parse/compile error now funnels here before
+// the CLI prints its generic "Error: X failed" banner so per-error detail is
+// preserved.
+static void drain_and_print_diagnostics(ZymVM* vm) {
+    size_t count = 0;
+    const ZymDiagnostic* diags = zymGetDiagnostics(vm, &count);
+    for (size_t i = 0; i < count; i++) {
+        const char* label = "error";
+        switch (diags[i].severity) {
+            case ZYM_DIAG_WARNING: label = "warning"; break;
+            case ZYM_DIAG_INFO:    label = "info";    break;
+            case ZYM_DIAG_HINT:    label = "hint";    break;
+            case ZYM_DIAG_ERROR:   default:           break;
+        }
+        fprintf(stderr, "%s: %s\n", label, diags[i].message ? diags[i].message : "");
+    }
+    if (count > 0) {
+        zymClearDiagnostics(vm);
+    }
+}
+
 static void print_banner(void) {
     printf("\n");
     printf("  =====================================================================\n");
@@ -235,8 +258,11 @@ static ModuleReadResult readAndPreprocessCallback(const char* path, void* user_d
     if (!raw_source) return result;
 
     ZymLineMap* line_map = zym_newLineMap(vm);
+    // Register each imported module with the VM's source-file registry so
+    // scanner tokens carry origin fileIds through the preprocess pass.
+    ZymFileId file_id = zym_registerSourceFile(vm, path, raw_source, strlen(raw_source));
     const char* preprocessed = NULL;
-    ZymStatus status = zym_preprocess(vm, raw_source, line_map, &preprocessed);
+    ZymStatus status = zym_preprocessEx(vm, raw_source, line_map, NULL, file_id, &preprocessed);
 
     free(raw_source);
 
@@ -259,12 +285,16 @@ static int preprocess_source(const char* source_file, char** out_preprocessed_so
 
     ZymVM* vm = zym_newVM(allocator);
     ZymLineMap* line_map = zym_newLineMap(vm);
+    ZymSourceMap* source_map = zym_newSourceMap(vm);
 
     setupNatives(vm);
 
-    if (zym_preprocess(vm, pre_source, line_map, &processed_source) != ZYM_STATUS_OK) {
+    ZymFileId entry_id = zym_registerSourceFile(vm, source_file, pre_source, strlen(pre_source));
+    if (zym_preprocessEx(vm, pre_source, line_map, source_map, entry_id, &processed_source) != ZYM_STATUS_OK) {
+        drain_and_print_diagnostics(vm);
         fprintf(stderr, "Error: Preprocessing failed.\n");
         free(pre_source);
+        zym_freeSourceMap(vm, source_map);
         zym_freeLineMap(vm, line_map);
         zym_freeVM(vm);
         return 0;
@@ -276,6 +306,7 @@ static int preprocess_source(const char* source_file, char** out_preprocessed_so
         fprintf(stderr, "Error: Could not allocate memory for preprocessed source.\n");
         zym_freeProcessedSource(vm, processed_source);
         free(pre_source);
+        zym_freeSourceMap(vm, source_map);
         zym_freeLineMap(vm, line_map);
         zym_freeVM(vm);
         return 0;
@@ -284,6 +315,7 @@ static int preprocess_source(const char* source_file, char** out_preprocessed_so
 
     zym_freeProcessedSource(vm, processed_source);
     free(pre_source);
+    zym_freeSourceMap(vm, source_map);
     zym_freeLineMap(vm, line_map);
     zym_freeVM(vm);
 
@@ -298,15 +330,19 @@ static int generate_combined_source(const char* source_file, char** out_combined
 
     ZymVM* compile_vm = zym_newVM(allocator);
     ZymLineMap* line_map = zym_newLineMap(compile_vm);
+    ZymSourceMap* source_map = zym_newSourceMap(compile_vm);
 
     setupNatives(compile_vm);
 
 #if DEBUG_SHOW
     printf("Preprocessing source...\n");
 #endif
-    if (zym_preprocess(compile_vm, pre_source, line_map, &processed_source) != ZYM_STATUS_OK) {
+    ZymFileId entry_id = zym_registerSourceFile(compile_vm, source_file, pre_source, strlen(pre_source));
+    if (zym_preprocessEx(compile_vm, pre_source, line_map, source_map, entry_id, &processed_source) != ZYM_STATUS_OK) {
+        drain_and_print_diagnostics(compile_vm);
         fprintf(stderr, "Error: Preprocessing failed.\n");
         free(pre_source);
+        zym_freeSourceMap(compile_vm, source_map);
         zym_freeLineMap(compile_vm, line_map);
         zym_freeVM(compile_vm);
         return 0;
@@ -322,6 +358,7 @@ static int generate_combined_source(const char* source_file, char** out_combined
         zym_freeProcessedSource(compile_vm, processed_source);
         free(pre_source);
         freeModuleLoadResult(compile_vm, module_result);
+        zym_freeSourceMap(compile_vm, source_map);
         zym_freeLineMap(compile_vm, line_map);
         zym_freeVM(compile_vm);
         return 0;
@@ -334,6 +371,7 @@ static int generate_combined_source(const char* source_file, char** out_combined
         zym_freeProcessedSource(compile_vm, processed_source);
         free(pre_source);
         freeModuleLoadResult(compile_vm, module_result);
+        zym_freeSourceMap(compile_vm, source_map);
         zym_freeLineMap(compile_vm, line_map);
         zym_freeVM(compile_vm);
         return 0;
@@ -343,6 +381,7 @@ static int generate_combined_source(const char* source_file, char** out_combined
     zym_freeProcessedSource(compile_vm, processed_source);
     free(pre_source);
     freeModuleLoadResult(compile_vm, module_result);
+    zym_freeSourceMap(compile_vm, source_map);
     zym_freeLineMap(compile_vm, line_map);
     zym_freeVM(compile_vm);
 
@@ -357,6 +396,7 @@ static int compile_source_to_bytecode(const char* source_file, char** out_byteco
 
     ZymVM* compile_vm = zym_newVM(allocator);
     ZymLineMap* line_map = zym_newLineMap(compile_vm);
+    ZymSourceMap* source_map = zym_newSourceMap(compile_vm);
     ZymChunk* compiled_chunk = zym_newChunk(compile_vm);
 
     setupNatives(compile_vm);
@@ -364,10 +404,12 @@ static int compile_source_to_bytecode(const char* source_file, char** out_byteco
 #if DEBUG_SHOW
     printf("Preprocessing source...\n");
 #endif
-    if (zym_preprocess(compile_vm, pre_source, line_map, &processed_source) != ZYM_STATUS_OK) {
+    ZymFileId entry_id = zym_registerSourceFile(compile_vm, source_file, pre_source, strlen(pre_source));
+    if (zym_preprocessEx(compile_vm, pre_source, line_map, source_map, entry_id, &processed_source) != ZYM_STATUS_OK) {
         fprintf(stderr, "Error: Preprocessing failed.\n");
         free(pre_source);
         zym_freeChunk(compile_vm, compiled_chunk);
+        zym_freeSourceMap(compile_vm, source_map);
         zym_freeLineMap(compile_vm, line_map);
         zym_freeVM(compile_vm);
         return 0;
@@ -385,6 +427,7 @@ static int compile_source_to_bytecode(const char* source_file, char** out_byteco
         free(pre_source);
         freeModuleLoadResult(compile_vm, module_result);
         zym_freeChunk(compile_vm, compiled_chunk);
+        zym_freeSourceMap(compile_vm, source_map);
         zym_freeLineMap(compile_vm, line_map);
         zym_freeVM(compile_vm);
         return 0;
@@ -413,12 +456,14 @@ static int compile_source_to_bytecode(const char* source_file, char** out_byteco
         entry_file_to_use = (char*)entry_file_path;
     }
 
-    if (zym_compile(compile_vm, module_result->combined_source, compiled_chunk, module_result->line_map, entry_file_to_use, config) != ZYM_STATUS_OK) {
+    if (zym_compileEx(compile_vm, module_result->combined_source, compiled_chunk, module_result->line_map, source_map, entry_file_to_use, config) != ZYM_STATUS_OK) {
+        drain_and_print_diagnostics(compile_vm);
         fprintf(stderr, "Error: Compilation failed.\n");
         zym_freeProcessedSource(compile_vm, processed_source);
         free(pre_source);
         freeModuleLoadResult(compile_vm, module_result);
         zym_freeChunk(compile_vm, compiled_chunk);
+        zym_freeSourceMap(compile_vm, source_map);
         zym_freeLineMap(compile_vm, line_map);
         zym_freeVM(compile_vm);
         return 0;
@@ -433,12 +478,14 @@ static int compile_source_to_bytecode(const char* source_file, char** out_byteco
     if (zym_serializeChunk(compile_vm, config, compiled_chunk, out_bytecode, out_size) != ZYM_STATUS_OK) {
         fprintf(stderr, "Error: Serialization failed.\n");
         zym_freeChunk(compile_vm, compiled_chunk);
+        zym_freeSourceMap(compile_vm, source_map);
         zym_freeLineMap(compile_vm, line_map);
         zym_freeVM(compile_vm);
         return 0;
     }
 
     zym_freeChunk(compile_vm, compiled_chunk);
+    zym_freeSourceMap(compile_vm, source_map);
     zym_freeLineMap(compile_vm, line_map);
     zym_freeVM(compile_vm);
 
