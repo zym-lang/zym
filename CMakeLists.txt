@@ -19,7 +19,7 @@ elseif(PGO_MODE STREQUAL "USE")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fprofile-use -fprofile-correction")
 endif()
 
-set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_BUILD_TYPE Release)
 
 cmake_minimum_required(VERSION 4.0)
 project(src C)

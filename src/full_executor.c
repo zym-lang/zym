@@ -28,27 +28,279 @@ void setupNatives(ZymVM* vm);
 
 #define FOOTER_MAGIC "ZYMBCODE"
 
-// Drain the VM's structured diagnostics to stderr and clear the buffer. This
-// replaces the fprintf(stderr, …) fallback that used to live inside
-// parser.c / compiler.c; every parse/compile error now funnels here before
-// the CLI prints its generic "Error: X failed" banner so per-error detail is
-// preserved.
+// ---------------------------------------------------------------------------
+// Phase 1.7 — rich diagnostic rendering.
+//
+// Consumes the structured fields that `ZymDiagnostic` has carried since
+// Phase 1.3/1.6 (fileId / startByte / length / startLine / startColumn /
+// endLine / endColumn / severity / code / hint) to emit rustc-style output:
+//
+//     error: Expect expression.
+//      --> tests/recovery/missing_expression.zym:3:9
+//       |
+//     3 | var x = ;
+//       |         ^
+//
+// Diagnostics are sorted by (fileId, startByte) for deterministic order,
+// grouped by file so the `-->` header is informative, and colored when
+// stderr is a TTY. A final summary ("N errors, M warnings") is printed
+// when more than one diagnostic was produced.
+// ---------------------------------------------------------------------------
+
+typedef struct {
+    int diag_index;
+    int file_id;
+    int start_byte;
+    int line;
+} DiagSortKey;
+
+static int diag_sort_cmp(const void* pa, const void* pb) {
+    const DiagSortKey* a = (const DiagSortKey*)pa;
+    const DiagSortKey* b = (const DiagSortKey*)pb;
+    if (a->file_id != b->file_id) return (a->file_id < b->file_id) ? -1 : 1;
+    if (a->start_byte != b->start_byte) {
+        if (a->start_byte < 0 && b->start_byte < 0) {
+            if (a->line != b->line) return (a->line < b->line) ? -1 : 1;
+            return 0;
+        }
+        if (a->start_byte < 0) return 1;
+        if (b->start_byte < 0) return -1;
+        return (a->start_byte < b->start_byte) ? -1 : 1;
+    }
+    return 0;
+}
+
+static int severity_is_error(ZymDiagSeverity s) {
+    return s == ZYM_DIAG_ERROR;
+}
+
+static int severity_is_warning(ZymDiagSeverity s) {
+    return s == ZYM_DIAG_WARNING;
+}
+
+static const char* severity_label(ZymDiagSeverity s) {
+    switch (s) {
+        case ZYM_DIAG_WARNING: return "warning";
+        case ZYM_DIAG_INFO:    return "info";
+        case ZYM_DIAG_HINT:    return "hint";
+        case ZYM_DIAG_ERROR:
+        default:               return "error";
+    }
+}
+
+// ANSI colors when stderr is a TTY.
+static const char* severity_color(ZymDiagSeverity s, int use_color) {
+    if (!use_color) return "";
+    switch (s) {
+        case ZYM_DIAG_WARNING: return "\x1b[1;33m"; // bold yellow
+        case ZYM_DIAG_INFO:    return "\x1b[1;34m"; // bold blue
+        case ZYM_DIAG_HINT:    return "\x1b[1;36m"; // bold cyan
+        case ZYM_DIAG_ERROR:
+        default:               return "\x1b[1;31m"; // bold red
+    }
+}
+static const char* color_reset(int use_color)  { return use_color ? "\x1b[0m"  : ""; }
+static const char* color_bold(int use_color)   { return use_color ? "\x1b[1m"  : ""; }
+static const char* color_dim(int use_color)    { return use_color ? "\x1b[2m"  : ""; }
+
+// Count decimal digits for gutter alignment (min 1).
+static int count_digits(int n) {
+    if (n <= 0) return 1;
+    int d = 0;
+    while (n > 0) { d++; n /= 10; }
+    return d;
+}
+
+// Find the byte range of the line containing `offset` inside bytes[0..len).
+// Sets *out_start, *out_end (exclusive of the trailing '\n').
+static void line_range_at(const char* bytes, int len, int offset,
+                          int* out_start, int* out_end) {
+    if (offset < 0) offset = 0;
+    if (offset > len) offset = len;
+    int s = offset;
+    while (s > 0 && bytes[s - 1] != '\n') s--;
+    int e = offset;
+    while (e < len && bytes[e] != '\n') e++;
+    if (out_start) *out_start = s;
+    if (out_end)   *out_end   = e;
+}
+
+// Render the 1-based line `line_no` from `sf` with a caret under the
+// (column, length) range. column is 1-based bytes; length may be 0.
+static void render_source_line(FILE* out,
+                               const ZymSourceFileInfo* sf,
+                               int line_no, int column, int length,
+                               int gutter_w,
+                               ZymDiagSeverity sev, int use_color) {
+    if (sf == NULL || sf->bytes == NULL || line_no <= 0) return;
+
+    // Walk forward to the nth newline.
+    int remaining = line_no - 1;
+    int p = 0;
+    int total = (int)sf->length;
+    while (remaining > 0 && p < total) {
+        if (sf->bytes[p] == '\n') remaining--;
+        p++;
+    }
+    if (remaining > 0) return; // line_no past EOF
+
+    int line_start = p;
+    int line_end;
+    line_range_at(sf->bytes, total, p, &line_start, &line_end);
+    int line_len = line_end - line_start;
+    if (line_len < 0) line_len = 0;
+
+    // Empty-gutter separator line.
+    fprintf(out, "%s%*s |%s\n",
+            color_dim(use_color), gutter_w, "", color_reset(use_color));
+
+    // Source line.
+    fprintf(out, "%s%*d |%s %.*s\n",
+            color_dim(use_color), gutter_w, line_no, color_reset(use_color),
+            line_len, sf->bytes + line_start);
+
+    // Caret line.
+    if (column > 0) {
+        int col_zero = column - 1;
+        if (col_zero > line_len) col_zero = line_len;
+        int span = length;
+        if (span <= 0) span = 1;
+        if (col_zero + span > line_len + 1) span = (line_len + 1) - col_zero;
+        if (span < 1) span = 1;
+
+        fprintf(out, "%s%*s |%s ", color_dim(use_color), gutter_w, "",
+                color_reset(use_color));
+        // Preserve tabs in leading run for correct visual alignment.
+        for (int i = 0; i < col_zero; i++) {
+            char c = sf->bytes[line_start + i];
+            fputc(c == '\t' ? '\t' : ' ', out);
+        }
+        fputs(severity_color(sev, use_color), out);
+        for (int i = 0; i < span; i++) fputc('^', out);
+        fputs(color_reset(use_color), out);
+        fputc('\n', out);
+    }
+}
+
+static void render_diagnostic(FILE* out,
+                              ZymVM* vm,
+                              const ZymDiagnostic* d,
+                              ZymFileId* last_file,
+                              int gutter_w,
+                              int use_color) {
+    const char* label = severity_label(d->severity);
+    const char* color = severity_color(d->severity, use_color);
+    const char* reset = color_reset(use_color);
+    const char* bold  = color_bold(use_color);
+
+    // Header: `error: <message>`   (or `error[E0001]: <message>` when coded)
+#if ZYM_HAS_DIAGNOSTIC_CODES
+    if (d->code && d->code[0]) {
+        fprintf(out, "%s%s[%s]%s%s: %s\n",
+                color, label, d->code, reset, bold,
+                d->message ? d->message : "");
+        fputs(reset, out);
+    } else
+#endif
+    {
+        fprintf(out, "%s%s%s%s: %s\n",
+                color, label, reset, bold, d->message ? d->message : "");
+        fputs(reset, out);
+    }
+
+    // --> path:line:col   (only when we have a file; reprint per diag so
+    //                       the line is self-contained and greppable)
+    ZymSourceFileInfo sf = {0};
+    int have_sf = zym_getSourceFile(vm, d->fileId, &sf);
+    const char* path = (have_sf && sf.path) ? sf.path : NULL;
+
+    if (path || d->line > 0) {
+        fprintf(out, "%s%*s -->%s ", color_dim(use_color), gutter_w, "", reset);
+        if (path) fputs(path, out);
+        else      fputs("<source>", out);
+        if (d->line > 0) {
+            fprintf(out, ":%d", d->line);
+            if (d->column > 0) fprintf(out, ":%d", d->column);
+        }
+        fputc('\n', out);
+    }
+
+    // Caret line (only if we have a span and source bytes).
+    if (have_sf && sf.bytes && d->line > 0) {
+        render_source_line(out, &sf, d->line,
+                           d->column > 0 ? d->column : 1,
+                           d->length,
+                           gutter_w,
+                           d->severity, use_color);
+    }
+
+#if ZYM_HAS_DIAGNOSTIC_CODES
+    if (d->hint && d->hint[0]) {
+        fprintf(out, "%s%*s =%s %shint:%s %s\n",
+                color_dim(use_color), gutter_w, "", reset,
+                color_bold(use_color), reset, d->hint);
+    }
+#endif
+
+    (void)last_file;
+}
+
 static void drain_and_print_diagnostics(ZymVM* vm) {
     size_t count = 0;
     const ZymDiagnostic* diags = zymGetDiagnostics(vm, &count);
-    for (size_t i = 0; i < count; i++) {
-        const char* label = "error";
-        switch (diags[i].severity) {
-            case ZYM_DIAG_WARNING: label = "warning"; break;
-            case ZYM_DIAG_INFO:    label = "info";    break;
-            case ZYM_DIAG_HINT:    label = "hint";    break;
-            case ZYM_DIAG_ERROR:   default:           break;
+    if (count == 0) return;
+
+    int use_color = 0;
+#ifndef _WIN32
+    use_color = isatty(fileno(stderr));
+#endif
+
+    // Stable-ish sort by (fileId, startByte); keep original index as the
+    // tiebreaker so diagnostics on the same token still print in arrival order.
+    DiagSortKey* order = (DiagSortKey*)malloc(count * sizeof(DiagSortKey));
+    if (order == NULL) {
+        for (size_t i = 0; i < count; i++) {
+            fprintf(stderr, "%s: %s\n", severity_label(diags[i].severity),
+                    diags[i].message ? diags[i].message : "");
         }
-        fprintf(stderr, "%s: %s\n", label, diags[i].message ? diags[i].message : "");
-    }
-    if (count > 0) {
         zymClearDiagnostics(vm);
+        return;
     }
+    int max_line = 0;
+    for (size_t i = 0; i < count; i++) {
+        order[i].diag_index = (int)i;
+        order[i].file_id    = diags[i].fileId;
+        order[i].start_byte = diags[i].startByte;
+        order[i].line       = diags[i].line;
+        int ln = diags[i].line;
+        if (ln > max_line) max_line = ln;
+    }
+    qsort(order, count, sizeof(DiagSortKey), diag_sort_cmp);
+
+    // Gutter width is governed by the largest line number seen.
+    int gutter_w = count_digits(max_line > 0 ? max_line : 1);
+    if (gutter_w < 2) gutter_w = 2;
+
+    ZymFileId last_file = ZYM_FILE_ID_INVALID;
+    size_t errors = 0, warnings = 0;
+    for (size_t i = 0; i < count; i++) {
+        const ZymDiagnostic* d = &diags[order[i].diag_index];
+        if (severity_is_error(d->severity))   errors++;
+        if (severity_is_warning(d->severity)) warnings++;
+        render_diagnostic(stderr, vm, d, &last_file, gutter_w, use_color);
+        if (i + 1 < count) fputc('\n', stderr);
+    }
+
+    if (count > 1) {
+        fprintf(stderr, "\n%s=%s %zu diagnostic%s (%zu error%s, %zu warning%s)\n",
+                color_dim(use_color), color_reset(use_color),
+                count, count == 1 ? "" : "s",
+                errors, errors == 1 ? "" : "s",
+                warnings, warnings == 1 ? "" : "s");
+    }
+
+    free(order);
+    zymClearDiagnostics(vm);
 }
 
 static void print_banner(void) {
