@@ -51,24 +51,25 @@ static char* zymvm_read_file(const char* path, size_t* out_size) {
 }
 
 static ModuleReadResult zymvm_module_read_callback(const char* path, void* user_data) {
-    ModuleReadResult result = {NULL, NULL};
+    ModuleReadResult result = { .source = NULL, .source_map = NULL, .file_id = ZYM_FILE_ID_INVALID };
     ZymVM* vm = (ZymVM*)user_data;
     char* raw_source = zymvm_read_file(path, NULL);
     if (!raw_source) return result;
 
-    ZymLineMap* line_map = zym_newLineMap(vm);
+    ZymFileId file_id = zym_registerSourceFile(vm, path, raw_source, strlen(raw_source));
+    ZymSourceMap* source_map = zym_newSourceMap(vm);
     const char* preprocessed = NULL;
-    ZymStatus status = zym_preprocess(vm, raw_source, line_map, &preprocessed);
+    ZymStatus status = zym_preprocess(vm, raw_source, source_map, file_id, &preprocessed);
     free(raw_source);
 
     if (status != ZYM_STATUS_OK) {
-        zym_freeLineMap(vm, line_map);
-        free((void*)line_map);
+        zym_freeSourceMap(vm, source_map);
         return result;
     }
 
     result.source = (char*)preprocessed;
-    result.line_map = line_map;
+    result.source_map = source_map;
+    result.file_id = file_id;
     return result;
 }
 
@@ -78,22 +79,23 @@ static char* zymvm_compile_source_internal(ZymVM* parent_vm, const char* source,
 
     setupNatives(compile_vm);
 
-    ZymLineMap* line_map = zym_newLineMap(compile_vm);
+    ZymSourceMap* source_map = zym_newSourceMap(compile_vm);
+    ZymFileId entry_id = zym_registerSourceFile(compile_vm, file_path, source, strlen(source));
     const char* processed_source = NULL;
 
-    if (zym_preprocess(compile_vm, source, line_map, &processed_source) != ZYM_STATUS_OK) {
-        zym_freeLineMap(compile_vm, line_map);
+    if (zym_preprocess(compile_vm, source, source_map, entry_id, &processed_source) != ZYM_STATUS_OK) {
+        zym_freeSourceMap(compile_vm, source_map);
         zym_freeVM(compile_vm);
         return NULL;
     }
 
     ModuleLoadResult* module_result = loadModules(
-        compile_vm, processed_source, line_map, file_path,
+        compile_vm, processed_source, source_map, file_path,
         zymvm_module_read_callback, compile_vm, true, false, NULL);
 
     if (module_result->has_error) {
         freeModuleLoadResult(compile_vm, module_result);
-        zym_freeLineMap(compile_vm, line_map);
+        zym_freeSourceMap(compile_vm, source_map);
         zym_freeVM(compile_vm);
         return NULL;
     }
@@ -102,10 +104,10 @@ static char* zymvm_compile_source_internal(ZymVM* parent_vm, const char* source,
     ZymCompilerConfig config = { .include_line_info = 1 };
     const char* entry_file = module_result->module_count > 0 ? module_result->module_paths[0] : file_path;
 
-    if (zym_compile(compile_vm, module_result->combined_source, chunk, module_result->line_map, entry_file, config) != ZYM_STATUS_OK) {
+    if (zym_compile(compile_vm, module_result->combined_source, chunk, module_result->source_map, entry_file, config) != ZYM_STATUS_OK) {
         freeModuleLoadResult(compile_vm, module_result);
         zym_freeChunk(compile_vm, chunk);
-        zym_freeLineMap(compile_vm, line_map);
+        zym_freeSourceMap(compile_vm, source_map);
         zym_freeVM(compile_vm);
         return NULL;
     }
@@ -116,13 +118,13 @@ static char* zymvm_compile_source_internal(ZymVM* parent_vm, const char* source,
     size_t bytecode_size = 0;
     if (zym_serializeChunk(compile_vm, config, chunk, &bytecode, &bytecode_size) != ZYM_STATUS_OK) {
         zym_freeChunk(compile_vm, chunk);
-        zym_freeLineMap(compile_vm, line_map);
+        zym_freeSourceMap(compile_vm, source_map);
         zym_freeVM(compile_vm);
         return NULL;
     }
 
     zym_freeChunk(compile_vm, chunk);
-    zym_freeLineMap(compile_vm, line_map);
+    zym_freeSourceMap(compile_vm, source_map);
     zym_freeVM(compile_vm);
 
     *out_size = bytecode_size;
